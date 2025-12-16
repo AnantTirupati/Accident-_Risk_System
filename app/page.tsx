@@ -104,7 +104,7 @@ export default function AccidentRiskDashboard() {
           </div>
 
           {/* Center - Map */}
-          <div className="col-span-6">
+          <div className="col-span-6 h-full min-h-500px">
             <RiskMap
               roadSegments={roadSegments}
               climate={climate}
