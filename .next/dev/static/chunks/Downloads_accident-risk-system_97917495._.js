@@ -1105,8 +1105,9 @@ __turbopack_context__.s([
     "predictRisk",
     ()=>predictRisk
 ]);
-// Feature engineering functions
-function isNight(hour) {
+/* ================================
+   Feature engineering helpers
+================================ */ function isNight(hour) {
     return hour >= 20 || hour <= 6;
 }
 function isPeakHour(hour) {
@@ -1133,34 +1134,50 @@ function isExtremeTemperature(temperature) {
 function isHighWindRisk(windSpeed) {
     return windSpeed > 30;
 }
-// Calculate climate risk index (0-1)
-function calculateClimateRiskIndex(input) {
+/* ================================
+   Input Sanitization (CRITICAL)
+================================ */ function sanitizeInput(input) {
+    return {
+        ...input,
+        // Climate bounds
+        rain_intensity: Math.max(0, Math.min(input.rain_intensity, 10)),
+        visibility: Math.max(0, input.visibility),
+        humidity: Math.max(0, Math.min(input.humidity, 100)),
+        wind_speed: Math.max(0, input.wind_speed),
+        temperature: Math.max(-10, Math.min(input.temperature, 55)),
+        // Time safety
+        hour: Math.max(0, Math.min(input.hour, 23))
+    };
+}
+/* ================================
+   Climate risk index (0 → 1)
+================================ */ function calculateClimateRiskIndex(input) {
     let index = 0;
-    // Weather type contribution
     const weatherWeights = {
         clear: 0,
         rain: 0.3,
         fog: 0.4,
         storm: 0.5
     };
-    index += weatherWeights[input.weather_type] || 0;
-    // Rain intensity (0-10 scale)
+    // Base weather risk
+    index += weatherWeights[input.weather_type];
+    // Rain intensity impact
     index += input.rain_intensity / 10 * 0.2;
-    // Visibility impact (inverted, lower = higher risk)
+    // Visibility (inverse relationship)
     index += Math.max(0, (500 - input.visibility) / 500) * 0.15;
-    // Wind speed impact
+    // Wind speed
     index += Math.min(input.wind_speed / 50, 1) * 0.1;
-    // Humidity impact on braking
+    // High humidity braking risk
     if (input.humidity > 80) {
         index += 0.05;
     }
     return Math.min(index, 1);
 }
-function predictRisk(input) {
+function predictRisk(rawInput) {
+    const input = sanitizeInput(rawInput);
     const factors = [];
     let riskScore = 0;
-    // Time-based features
-    if (isNight(input.hour)) {
+    /* ---- Time-based factors ---- */ if (isNight(input.hour)) {
         riskScore += 0.15;
         factors.push("Night Time");
     }
@@ -1168,8 +1185,7 @@ function predictRisk(input) {
         riskScore += 0.1;
         factors.push("Peak Hour Traffic");
     }
-    // Road-based features
-    if (isSharpCurve(input.curve_radius)) {
+    /* ---- Road-based factors ---- */ if (isSharpCurve(input.curve_radius)) {
         riskScore += 0.2;
         factors.push("Sharp Curve");
     }
@@ -1189,43 +1205,22 @@ function predictRisk(input) {
         riskScore += 0.1;
         factors.push("High Junction Density");
     }
-    // Climate-based features
-    const climateIndex = calculateClimateRiskIndex(input);
+    /* ---- Climate-based factors ---- */ const climateIndex = calculateClimateRiskIndex(input);
     riskScore += climateIndex * 0.4;
-    if (input.weather_type === "rain") {
-        factors.push("Heavy Rain");
-    } else if (input.weather_type === "fog") {
-        factors.push("Dense Fog");
-    } else if (input.weather_type === "storm") {
-        factors.push("Storm Conditions");
-    }
-    if (isPoorVisibility(input.visibility)) {
-        factors.push("Low Visibility");
-    }
-    if (isWetRoad(input.rain_intensity)) {
-        factors.push("Wet Road Surface");
-    }
-    if (isExtremeTemperature(input.temperature)) {
-        factors.push("Extreme Temperature");
-    }
-    if (isHighWindRisk(input.wind_speed)) {
-        factors.push("High Wind Risk");
-    }
-    // Normalize risk score
-    riskScore = Math.min(Math.max(riskScore, 0), 1);
-    // Determine climate risk level
-    let climateRisk;
-    if (riskScore >= 0.75) {
-        climateRisk = "Critical";
-    } else if (riskScore >= 0.5) {
-        climateRisk = "High";
-    } else if (riskScore >= 0.25) {
-        climateRisk = "Medium";
-    } else {
-        climateRisk = "Low";
-    }
-    // Generate recommendations
-    const recommendations = generateRecommendations(factors, riskScore);
+    if (input.weather_type === "rain") factors.push("Heavy Rain");
+    if (input.weather_type === "fog") factors.push("Dense Fog");
+    if (input.weather_type === "storm") factors.push("Storm Conditions");
+    if (isPoorVisibility(input.visibility)) factors.push("Low Visibility");
+    if (isWetRoad(input.rain_intensity)) factors.push("Wet Road Surface");
+    if (isExtremeTemperature(input.temperature)) factors.push("Extreme Temperature");
+    if (isHighWindRisk(input.wind_speed)) factors.push("High Wind Risk");
+    /* ---- Normalize risk score ---- */ riskScore = Math.min(Math.max(riskScore, 0), 1);
+    /* ---- Risk category ---- */ let climateRisk;
+    if (riskScore >= 0.75) climateRisk = "Critical";
+    else if (riskScore >= 0.5) climateRisk = "High";
+    else if (riskScore >= 0.25) climateRisk = "Medium";
+    else climateRisk = "Low";
+    /* ---- Recommendations ---- */ const recommendations = generateRecommendations(factors, riskScore);
     return {
         road_id: input.road_id,
         risk_score: Math.round(riskScore * 100) / 100,
@@ -1234,7 +1229,9 @@ function predictRisk(input) {
         recommendations
     };
 }
-function generateRecommendations(factors, riskScore) {
+/* ================================
+   Recommendations engine
+================================ */ function generateRecommendations(factors, riskScore) {
     const recommendations = [];
     if (factors.includes("Heavy Rain") || factors.includes("Wet Road Surface")) {
         recommendations.push("Reduce speed by 20% due to wet conditions");
@@ -1258,17 +1255,13 @@ function generateRecommendations(factors, riskScore) {
 }
 function getRiskColor(riskScore, weatherType) {
     if (riskScore >= 0.75) {
-        return weatherType === "rain" ? "#dc2626" : "#ef4444" // Dark red for rain + high risk
-        ;
+        return weatherType === "rain" ? "#dc2626" : "#ef4444";
     } else if (riskScore >= 0.5) {
-        return weatherType === "fog" ? "#f97316" : "#fb923c" // Orange for fog + medium risk
-        ;
+        return weatherType === "fog" ? "#f97316" : "#fb923c";
     } else if (riskScore >= 0.25) {
-        return "#fbbf24" // Yellow for low-medium
-        ;
+        return "#fbbf24";
     }
-    return "#22c55e" // Green for safe
-    ;
+    return "#22c55e";
 }
 if (typeof globalThis.$RefreshHelpers$ === 'object' && globalThis.$RefreshHelpers !== null) {
     __turbopack_context__.k.registerExports(__turbopack_context__.m, globalThis.$RefreshHelpers$);
@@ -2026,8 +2019,9 @@ __turbopack_context__.s([
     "RiskMap",
     ()=>RiskMap
 ]);
+var __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$build$2f$polyfills$2f$process$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = /*#__PURE__*/ __turbopack_context__.i("[project]/Downloads/accident-risk-system/node_modules/next/dist/build/polyfills/process.js [app-client] (ecmascript)");
 var __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/Downloads/accident-risk-system/node_modules/next/dist/compiled/react/jsx-dev-runtime.js [app-client] (ecmascript)");
-var __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/Downloads/accident-risk-system/node_modules/next/dist/compiled/react/index.js [app-client] (ecmascript)");
+var __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f40$react$2d$google$2d$maps$2f$api$2f$dist$2f$esm$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/Downloads/accident-risk-system/node_modules/@react-google-maps/api/dist/esm.js [app-client] (ecmascript)");
 var __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$components$2f$ui$2f$card$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/Downloads/accident-risk-system/components/ui/card.tsx [app-client] (ecmascript)");
 var __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$cloud$2d$rain$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__CloudRain$3e$__ = __turbopack_context__.i("[project]/Downloads/accident-risk-system/node_modules/lucide-react/dist/esm/icons/cloud-rain.js [app-client] (ecmascript) <export default as CloudRain>");
 var __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$cloud$2d$fog$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__CloudFog$3e$__ = __turbopack_context__.i("[project]/Downloads/accident-risk-system/node_modules/lucide-react/dist/esm/icons/cloud-fog.js [app-client] (ecmascript) <export default as CloudFog>");
@@ -2035,9 +2029,8 @@ var __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$ris
 var __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$cloud$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Cloud$3e$__ = __turbopack_context__.i("[project]/Downloads/accident-risk-system/node_modules/lucide-react/dist/esm/icons/cloud.js [app-client] (ecmascript) <export default as Cloud>");
 var __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$map$2d$pin$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__MapPin$3e$__ = __turbopack_context__.i("[project]/Downloads/accident-risk-system/node_modules/lucide-react/dist/esm/icons/map-pin.js [app-client] (ecmascript) <export default as MapPin>");
 var __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$lib$2f$ml$2d$model$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/Downloads/accident-risk-system/lib/ml-model.ts [app-client] (ecmascript)");
-;
-var _s = __turbopack_context__.k.signature();
 "use client";
+;
 ;
 ;
 ;
@@ -2048,167 +2041,24 @@ const weatherIcons = {
     fog: __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$cloud$2d$fog$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__CloudFog$3e$__["CloudFog"],
     storm: __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$cloud$2d$lightning$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__CloudLightning$3e$__["CloudLightning"]
 };
+const containerStyle = {
+    width: "100%",
+    height: "100%"
+};
+// fallback (India center)
+const defaultCenter = {
+    lat: 20.5937,
+    lng: 78.9629
+};
 function RiskMap({ roadSegments, climate, onSelectRoad, selectedRoad }) {
-    _s();
-    const canvasRef = (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useRef"])(null);
-    const containerRef = (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useRef"])(null);
-    const [dimensions, setDimensions] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])({
-        width: 800,
-        height: 500
-    });
-    // Calculate map bounds
-    const bounds = {
-        minLat: Math.min(...roadSegments.map((r)=>r.latitude)) - 0.02,
-        maxLat: Math.max(...roadSegments.map((r)=>r.latitude)) + 0.02,
-        minLng: Math.min(...roadSegments.map((r)=>r.longitude)) - 0.02,
-        maxLng: Math.max(...roadSegments.map((r)=>r.longitude)) + 0.02
-    };
-    // Convert lat/lng to canvas coordinates
-    const toCanvasCoords = (lat, lng)=>{
-        const x = (lng - bounds.minLng) / (bounds.maxLng - bounds.minLng) * dimensions.width;
-        const y = (bounds.maxLat - lat) / (bounds.maxLat - bounds.minLat) * dimensions.height;
-        return {
-            x,
-            y
-        };
-    };
-    (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useEffect"])({
-        "RiskMap.useEffect": ()=>{
-            const updateDimensions = {
-                "RiskMap.useEffect.updateDimensions": ()=>{
-                    if (containerRef.current) {
-                        const rect = containerRef.current.getBoundingClientRect();
-                        setDimensions({
-                            width: rect.width,
-                            height: Math.max(400, rect.height - 60)
-                        });
-                    }
-                }
-            }["RiskMap.useEffect.updateDimensions"];
-            updateDimensions();
-            window.addEventListener("resize", updateDimensions);
-            return ({
-                "RiskMap.useEffect": ()=>window.removeEventListener("resize", updateDimensions)
-            })["RiskMap.useEffect"];
-        }
-    }["RiskMap.useEffect"], []);
-    (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useEffect"])({
-        "RiskMap.useEffect": ()=>{
-            const canvas = canvasRef.current;
-            if (!canvas) return;
-            const ctx = canvas.getContext("2d");
-            if (!ctx) return;
-            // Clear canvas
-            ctx.fillStyle = "#0f1629";
-            ctx.fillRect(0, 0, dimensions.width, dimensions.height);
-            // Draw grid
-            ctx.strokeStyle = "#1e293b";
-            ctx.lineWidth = 1;
-            for(let i = 0; i < dimensions.width; i += 50){
-                ctx.beginPath();
-                ctx.moveTo(i, 0);
-                ctx.lineTo(i, dimensions.height);
-                ctx.stroke();
-            }
-            for(let i = 0; i < dimensions.height; i += 50){
-                ctx.beginPath();
-                ctx.moveTo(0, i);
-                ctx.lineTo(dimensions.width, i);
-                ctx.stroke();
-            }
-            // Draw simulated road connections
-            ctx.strokeStyle = "#334155";
-            ctx.lineWidth = 3;
-            const sortedByLat = [
-                ...roadSegments
-            ].sort({
-                "RiskMap.useEffect.sortedByLat": (a, b)=>a.latitude - b.latitude
-            }["RiskMap.useEffect.sortedByLat"]);
-            for(let i = 0; i < sortedByLat.length - 1; i++){
-                const start = toCanvasCoords(sortedByLat[i].latitude, sortedByLat[i].longitude);
-                const end = toCanvasCoords(sortedByLat[i + 1].latitude, sortedByLat[i + 1].longitude);
-                ctx.beginPath();
-                ctx.moveTo(start.x, start.y);
-                ctx.lineTo(end.x, end.y);
-                ctx.stroke();
-            }
-            // Draw weather effects overlay
-            if (climate.weather_type === "rain") {
-                ctx.fillStyle = "rgba(59, 130, 246, 0.1)";
-                ctx.fillRect(0, 0, dimensions.width, dimensions.height);
-            } else if (climate.weather_type === "fog") {
-                ctx.fillStyle = "rgba(148, 163, 184, 0.15)";
-                ctx.fillRect(0, 0, dimensions.width, dimensions.height);
-            } else if (climate.weather_type === "storm") {
-                ctx.fillStyle = "rgba(124, 58, 237, 0.1)";
-                ctx.fillRect(0, 0, dimensions.width, dimensions.height);
-            }
-            // Draw road segments as circles with risk colors
-            roadSegments.forEach({
-                "RiskMap.useEffect": (segment)=>{
-                    const { x, y } = toCanvasCoords(segment.latitude, segment.longitude);
-                    const color = (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$lib$2f$ml$2d$model$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__["getRiskColor"])(segment.risk_score, climate.weather_type);
-                    const isSelected = selectedRoad?.road_id === segment.road_id;
-                    // Outer glow for high risk
-                    if (segment.risk_score >= 0.5) {
-                        const gradient = ctx.createRadialGradient(x, y, 0, x, y, 40);
-                        gradient.addColorStop(0, color + "60");
-                        gradient.addColorStop(1, "transparent");
-                        ctx.fillStyle = gradient;
-                        ctx.beginPath();
-                        ctx.arc(x, y, 40, 0, Math.PI * 2);
-                        ctx.fill();
-                    }
-                    // Main circle
-                    ctx.fillStyle = color;
-                    ctx.beginPath();
-                    ctx.arc(x, y, isSelected ? 18 : 14, 0, Math.PI * 2);
-                    ctx.fill();
-                    // Selection ring
-                    if (isSelected) {
-                        ctx.strokeStyle = "#ffffff";
-                        ctx.lineWidth = 3;
-                        ctx.beginPath();
-                        ctx.arc(x, y, 22, 0, Math.PI * 2);
-                        ctx.stroke();
-                    }
-                    // Risk score label
-                    ctx.fillStyle = "#ffffff";
-                    ctx.font = "bold 10px Geist";
-                    ctx.textAlign = "center";
-                    ctx.textBaseline = "middle";
-                    ctx.fillText(`${Math.round(segment.risk_score * 100)}`, x, y);
-                }
-            }["RiskMap.useEffect"]);
-        }
-    }["RiskMap.useEffect"], [
-        roadSegments,
-        climate,
-        dimensions,
-        selectedRoad,
-        bounds
-    ]);
-    const handleCanvasClick = (e)=>{
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        // Find clicked road segment
-        for (const segment of roadSegments){
-            const coords = toCanvasCoords(segment.latitude, segment.longitude);
-            const distance = Math.sqrt((x - coords.x) ** 2 + (y - coords.y) ** 2);
-            if (distance < 20) {
-                onSelectRoad(segment);
-                return;
-            }
-        }
-        onSelectRoad(null);
-    };
     const WeatherIcon = weatherIcons[climate.weather_type];
+    // Auto-center map using first road segment midpoint
+    const center = roadSegments.find((s)=>s.geometry)?.geometry ? {
+        lat: (roadSegments[0].geometry.start.lat + roadSegments[0].geometry.end.lat) / 2,
+        lng: (roadSegments[0].geometry.start.lng + roadSegments[0].geometry.end.lng) / 2
+    } : defaultCenter;
     return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$components$2f$ui$2f$card$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__["Card"], {
         className: "bg-card border-border overflow-hidden h-full",
-        ref: containerRef,
         children: [
             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
                 className: "p-3 border-b border-border flex items-center justify-between",
@@ -2220,7 +2070,7 @@ function RiskMap({ roadSegments, climate, onSelectRoad, selectedRoad }) {
                                 className: "h-4 w-4 text-primary"
                             }, void 0, false, {
                                 fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                lineNumber: 183,
+                                lineNumber: 64,
                                 columnNumber: 11
                             }, this),
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
@@ -2228,13 +2078,13 @@ function RiskMap({ roadSegments, climate, onSelectRoad, selectedRoad }) {
                                 children: "Live Risk Heatmap"
                             }, void 0, false, {
                                 fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                lineNumber: 184,
+                                lineNumber: 65,
                                 columnNumber: 11
                             }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                        lineNumber: 182,
+                        lineNumber: 63,
                         columnNumber: 9
                     }, this),
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -2247,162 +2097,163 @@ function RiskMap({ roadSegments, climate, onSelectRoad, selectedRoad }) {
                                         className: "h-4 w-4 text-muted-foreground"
                                     }, void 0, false, {
                                         fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                        lineNumber: 188,
+                                        lineNumber: 70,
                                         columnNumber: 13
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                                        className: "text-xs text-muted-foreground capitalize",
+                                        className: "text-xs capitalize text-muted-foreground",
                                         children: climate.weather_type
                                     }, void 0, false, {
                                         fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                        lineNumber: 189,
+                                        lineNumber: 71,
                                         columnNumber: 13
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                lineNumber: 187,
+                                lineNumber: 69,
                                 columnNumber: 11
                             }, this),
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
                                 className: "flex items-center gap-3 text-xs",
                                 children: [
-                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                        className: "flex items-center gap-1",
-                                        children: [
-                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                                className: "w-3 h-3 rounded-full bg-green-500"
-                                            }, void 0, false, {
-                                                fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                                lineNumber: 194,
-                                                columnNumber: 15
-                                            }, this),
-                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                                                className: "text-muted-foreground",
-                                                children: "Safe"
-                                            }, void 0, false, {
-                                                fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                                lineNumber: 195,
-                                                columnNumber: 15
-                                            }, this)
-                                        ]
-                                    }, void 0, true, {
+                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(Legend, {
+                                        color: "bg-green-500",
+                                        label: "Safe"
+                                    }, void 0, false, {
                                         fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                        lineNumber: 193,
+                                        lineNumber: 78,
                                         columnNumber: 13
                                     }, this),
-                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                        className: "flex items-center gap-1",
-                                        children: [
-                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                                className: "w-3 h-3 rounded-full bg-yellow-500"
-                                            }, void 0, false, {
-                                                fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                                lineNumber: 198,
-                                                columnNumber: 15
-                                            }, this),
-                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                                                className: "text-muted-foreground",
-                                                children: "Medium"
-                                            }, void 0, false, {
-                                                fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                                lineNumber: 199,
-                                                columnNumber: 15
-                                            }, this)
-                                        ]
-                                    }, void 0, true, {
+                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(Legend, {
+                                        color: "bg-yellow-500",
+                                        label: "Medium"
+                                    }, void 0, false, {
                                         fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                        lineNumber: 197,
+                                        lineNumber: 79,
                                         columnNumber: 13
                                     }, this),
-                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                        className: "flex items-center gap-1",
-                                        children: [
-                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                                className: "w-3 h-3 rounded-full bg-orange-500"
-                                            }, void 0, false, {
-                                                fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                                lineNumber: 202,
-                                                columnNumber: 15
-                                            }, this),
-                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                                                className: "text-muted-foreground",
-                                                children: "High"
-                                            }, void 0, false, {
-                                                fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                                lineNumber: 203,
-                                                columnNumber: 15
-                                            }, this)
-                                        ]
-                                    }, void 0, true, {
+                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(Legend, {
+                                        color: "bg-orange-500",
+                                        label: "High"
+                                    }, void 0, false, {
                                         fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                        lineNumber: 201,
+                                        lineNumber: 80,
                                         columnNumber: 13
                                     }, this),
-                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                        className: "flex items-center gap-1",
-                                        children: [
-                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                                className: "w-3 h-3 rounded-full bg-red-500"
-                                            }, void 0, false, {
-                                                fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                                lineNumber: 206,
-                                                columnNumber: 15
-                                            }, this),
-                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                                                className: "text-muted-foreground",
-                                                children: "Critical"
-                                            }, void 0, false, {
-                                                fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                                lineNumber: 207,
-                                                columnNumber: 15
-                                            }, this)
-                                        ]
-                                    }, void 0, true, {
+                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(Legend, {
+                                        color: "bg-red-500",
+                                        label: "Critical"
+                                    }, void 0, false, {
                                         fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                        lineNumber: 205,
+                                        lineNumber: 81,
                                         columnNumber: 13
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                                lineNumber: 192,
+                                lineNumber: 77,
                                 columnNumber: 11
                             }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                        lineNumber: 186,
+                        lineNumber: 68,
                         columnNumber: 9
                     }, this)
                 ]
             }, void 0, true, {
                 fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                lineNumber: 181,
+                lineNumber: 62,
                 columnNumber: 7
             }, this),
-            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("canvas", {
-                ref: canvasRef,
-                width: dimensions.width,
-                height: dimensions.height,
-                onClick: handleCanvasClick,
-                className: "cursor-pointer"
+            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                className: "h-[450px]",
+                children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f40$react$2d$google$2d$maps$2f$api$2f$dist$2f$esm$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["LoadScript"], {
+                    googleMapsApiKey: ("TURBOPACK compile-time value", "AIzaSyBKCi7H0Xpb8b1dWb9tmpkGQ2puoeA3tgI"),
+                    children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f40$react$2d$google$2d$maps$2f$api$2f$dist$2f$esm$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["GoogleMap"], {
+                        mapContainerStyle: containerStyle,
+                        center: center,
+                        zoom: 11,
+                        children: roadSegments.filter((segment)=>segment.geometry?.start && segment.geometry?.end).map((segment)=>{
+                            const riskColor = (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$lib$2f$ml$2d$model$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__["getRiskColor"])(segment.risk_score, climate.weather_type);
+                            const isSelected = selectedRoad?.road_id === segment.road_id;
+                            return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f40$react$2d$google$2d$maps$2f$api$2f$dist$2f$esm$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["Polyline"], {
+                                path: [
+                                    {
+                                        lat: segment.geometry.start.lat,
+                                        lng: segment.geometry.start.lng
+                                    },
+                                    {
+                                        lat: segment.geometry.end.lat,
+                                        lng: segment.geometry.end.lng
+                                    }
+                                ],
+                                options: {
+                                    strokeColor: riskColor,
+                                    strokeOpacity: 0.9,
+                                    strokeWeight: isSelected ? 8 : 5
+                                },
+                                onClick: ()=>onSelectRoad(segment)
+                            }, segment.road_id, false, {
+                                fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
+                                lineNumber: 113,
+                                columnNumber: 19
+                            }, this);
+                        })
+                    }, void 0, false, {
+                        fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
+                        lineNumber: 93,
+                        columnNumber: 11
+                    }, this)
+                }, void 0, false, {
+                    fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
+                    lineNumber: 88,
+                    columnNumber: 9
+                }, this)
             }, void 0, false, {
                 fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-                lineNumber: 212,
+                lineNumber: 87,
                 columnNumber: 7
             }, this)
         ]
     }, void 0, true, {
         fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
-        lineNumber: 180,
+        lineNumber: 60,
         columnNumber: 5
     }, this);
 }
-_s(RiskMap, "pOkBHiKThgrdXFznrdImZeS3FxE=");
 _c = RiskMap;
-var _c;
+function Legend({ color, label }) {
+    return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+        className: "flex items-center gap-1",
+        children: [
+            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                className: `w-3 h-3 rounded-full ${color}`
+            }, void 0, false, {
+                fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
+                lineNumber: 145,
+                columnNumber: 7
+            }, this),
+            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
+                className: "text-muted-foreground",
+                children: label
+            }, void 0, false, {
+                fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
+                lineNumber: 146,
+                columnNumber: 7
+            }, this)
+        ]
+    }, void 0, true, {
+        fileName: "[project]/Downloads/accident-risk-system/components/risk-map.tsx",
+        lineNumber: 144,
+        columnNumber: 5
+    }, this);
+}
+_c1 = Legend;
+var _c, _c1;
 __turbopack_context__.k.register(_c, "RiskMap");
+__turbopack_context__.k.register(_c1, "Legend");
 if (typeof globalThis.$RefreshHelpers$ === 'object' && globalThis.$RefreshHelpers !== null) {
     __turbopack_context__.k.registerExports(__turbopack_context__.m, globalThis.$RefreshHelpers$);
 }
@@ -2890,7 +2741,7 @@ function AccidentRiskDashboard() {
                                 columnNumber: 11
                             }, this),
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                className: "col-span-6",
+                                className: "col-span-6 h-full min-h-500px",
                                 children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$Downloads$2f$accident$2d$risk$2d$system$2f$components$2f$risk$2d$map$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__["RiskMap"], {
                                     roadSegments: roadSegments,
                                     climate: climate,
@@ -2941,7 +2792,7 @@ function AccidentRiskDashboard() {
         columnNumber: 5
     }, this);
 }
-_s(AccidentRiskDashboard, "dA+T0QTb9rhHE1e9dkfM9wQk75w=");
+_s(AccidentRiskDashboard, "jQIeg2vcXJw1O3K8R+TzvwR22hA=");
 _c = AccidentRiskDashboard;
 var _c;
 __turbopack_context__.k.register(_c, "AccidentRiskDashboard");

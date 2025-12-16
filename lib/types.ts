@@ -1,9 +1,16 @@
-// Type definitions for the accident risk prediction system
+export interface LatLng {
+  lat: number
+  lng: number
+}
+
+export interface RoadGeometry {
+  start: LatLng
+  end: LatLng
+}
 
 export interface RoadSegment {
   road_id: string
-  latitude: number
-  longitude: number
+  geometry: RoadGeometry   // ✅ REQUIRED
   curve_radius: number
   road_slope: number
   num_lanes: number
@@ -25,7 +32,10 @@ export interface TimeConditions {
   day_type: "weekday" | "weekend"
 }
 
-export interface PredictionInput extends RoadSegment, ClimateConditions, TimeConditions {}
+export interface PredictionInput
+  extends RoadSegment,
+    ClimateConditions,
+    TimeConditions {}
 
 export interface RiskPrediction {
   road_id: string

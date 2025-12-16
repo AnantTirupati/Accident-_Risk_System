@@ -1,5 +1,6 @@
-// GET /api/road-segments - Get all road segments with risk scores
-// Equivalent to FastAPI GET /road-segments endpoint
+// GET /api/road-segments
+// Returns road segments with ML-based risk scores
+// Geometry-based (Polyline ready)
 
 import { NextResponse } from "next/server"
 import { getRoadSegmentsWithRisk } from "@/lib/road-data"
@@ -9,37 +10,60 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
 
-    // Parse climate parameters from query string
-    const weatherType = (searchParams.get("weather_type") as ClimateConditions["weather_type"]) || "clear"
-    const rainIntensity = Number.parseFloat(searchParams.get("rain_intensity") || "0")
-    const visibility = Number.parseInt(searchParams.get("visibility") || "1000")
-    const temperature = Number.parseInt(searchParams.get("temperature") || "25")
-    const humidity = Number.parseInt(searchParams.get("humidity") || "60")
-    const windSpeed = Number.parseInt(searchParams.get("wind_speed") || "10")
+    // ---- Climate parameters ----
+    const weatherType =
+      (searchParams.get(
+        "weather_type"
+      ) as ClimateConditions["weather_type"]) || "clear"
+
+    const rainIntensity = Number.parseFloat(
+      searchParams.get("rain_intensity") || "0"
+    )
+    const visibility = Number.parseInt(
+      searchParams.get("visibility") || "1000"
+    )
+    const temperature = Number.parseInt(
+      searchParams.get("temperature") || "25"
+    )
+    const humidity = Number.parseInt(
+      searchParams.get("humidity") || "60"
+    )
+    const windSpeed = Number.parseInt(
+      searchParams.get("wind_speed") || "10"
+    )
     const hour = Number.parseInt(searchParams.get("hour") || "12")
 
     const climate: ClimateConditions = {
       weather_type: weatherType,
       rain_intensity: rainIntensity,
-      visibility: visibility,
-      temperature: temperature,
-      humidity: humidity,
+      visibility,
+      temperature,
+      humidity,
       wind_speed: windSpeed,
     }
 
-    // Get road segments with calculated risk
+    // ---- ML risk calculation ----
     const segments = getRoadSegmentsWithRisk(climate, hour)
 
+    // ---- API response (geometry-based) ----
     return NextResponse.json({
       total: segments.length,
       climate_conditions: climate,
-      hour: hour,
+      hour,
       segments: segments.map((seg) => ({
         road_id: seg.road_id,
-        coordinates: {
-          latitude: seg.latitude,
-          longitude: seg.longitude,
+
+        geometry: {
+          start: {
+            lat: seg.geometry.start.lat,
+            lng: seg.geometry.start.lng,
+          },
+          end: {
+            lat: seg.geometry.end.lat,
+            lng: seg.geometry.end.lng,
+          },
         },
+
         road_properties: {
           curve_radius: seg.curve_radius,
           road_slope: seg.road_slope,
@@ -47,6 +71,7 @@ export async function GET(request: Request) {
           speed_limit: seg.speed_limit,
           junction_density: seg.junction_density,
         },
+
         risk_assessment: {
           risk_score: seg.risk_score,
           climate_risk: seg.climate_risk,
@@ -55,7 +80,10 @@ export async function GET(request: Request) {
       })),
     })
   } catch (error) {
-    console.error("Road segments error:", error)
-    return NextResponse.json({ error: "Failed to fetch road segments" }, { status: 500 })
+    console.error("Road segments API error:", error)
+    return NextResponse.json(
+      { error: "Failed to fetch road segments" },
+      { status: 500 }
+    )
   }
 }

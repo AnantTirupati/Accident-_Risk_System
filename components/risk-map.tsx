@@ -1,6 +1,6 @@
 "use client"
 
-import { GoogleMap, LoadScript, Circle } from "@react-google-maps/api"
+import { GoogleMap, LoadScript, Polyline } from "@react-google-maps/api"
 import { Card } from "@/components/ui/card"
 import { CloudRain, CloudFog, CloudLightning, Cloud, MapPin } from "lucide-react"
 import type { RoadSegmentWithRisk, ClimateConditions } from "@/lib/types"
@@ -25,7 +25,7 @@ const containerStyle = {
   height: "100%",
 }
 
-// fallback (India)
+// fallback (India center)
 const defaultCenter = {
   lat: 20.5937,
   lng: 78.9629,
@@ -39,14 +39,22 @@ export function RiskMap({
 }: RiskMapProps) {
   const WeatherIcon = weatherIcons[climate.weather_type]
 
-  // auto-center map using first segment
+  // Auto-center map using first road segment midpoint
   const center =
-    roadSegments.length > 0
-      ? {
-          lat: roadSegments[0].latitude,
-          lng: roadSegments[0].longitude,
-        }
-      : defaultCenter
+  roadSegments.find((s) => s.geometry)?.geometry
+    ? {
+        lat:
+          (roadSegments[0].geometry.start.lat +
+            roadSegments[0].geometry.end.lat) /
+          2,
+        lng:
+          (roadSegments[0].geometry.start.lng +
+            roadSegments[0].geometry.end.lng) /
+          2,
+      }
+    : defaultCenter
+
+
 
   return (
     <Card className="bg-card border-border overflow-hidden h-full">
@@ -77,39 +85,53 @@ export function RiskMap({
 
       {/* Map */}
       <div className="h-[450px]">
-        <LoadScript googleMapsApiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY!}>
+        <LoadScript
+          googleMapsApiKey={
+            process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY!
+          }
+        >
           <GoogleMap
             mapContainerStyle={containerStyle}
             center={center}
-            zoom={8}
+            zoom={11}
           >
-            {roadSegments.map((segment) => {
-              const riskColor = getRiskColor(
-                segment.risk_score,
-                climate.weather_type
+            {roadSegments
+              .filter(
+                (segment) =>
+                  segment.geometry?.start && segment.geometry?.end
               )
+              .map((segment) => {
+                const riskColor = getRiskColor(
+                  segment.risk_score,
+                  climate.weather_type
+                )
 
-              const isSelected =
-                selectedRoad?.road_id === segment.road_id
+                const isSelected =
+                  selectedRoad?.road_id === segment.road_id
 
-              return (
-                <Circle
-                  key={segment.road_id}
-                  center={{
-                    lat: segment.latitude,
-                    lng: segment.longitude,
-                  }}
-                  radius={isSelected ? 6000 : 4000}
-                  options={{
-                    fillColor: riskColor,
-                    fillOpacity: isSelected ? 0.7 : 0.5,
-                    strokeColor: isSelected ? "#000000" : undefined,
-                    strokeWeight: isSelected ? 2 : 0,
-                  }}
-                  onClick={() => onSelectRoad(segment)}
-                />
-              )
-            })}
+                return (
+                  <Polyline
+                    key={segment.road_id}
+                    path={[
+                      {
+                        lat: segment.geometry.start.lat,
+                        lng: segment.geometry.start.lng,
+                      },
+                      {
+                        lat: segment.geometry.end.lat,
+                        lng: segment.geometry.end.lng,
+                      },
+                    ]}
+                    options={{
+                      strokeColor: riskColor,
+                      strokeOpacity: 0.9,
+                      strokeWeight: isSelected ? 8 : 5,
+                    }}
+                    onClick={() => onSelectRoad(segment)}
+                  />
+                )
+              })}
+
           </GoogleMap>
         </LoadScript>
       </div>
